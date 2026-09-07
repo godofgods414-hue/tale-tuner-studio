@@ -434,6 +434,11 @@ export async function writePrompts(
     else seen.set(fingerprint, n);
   }
 
+  // ONE ENTRY PER REQUESTED LINE, ALWAYS. The array is positional: the caller
+  // maps built[i] onto line (from + i), so a missing prompt must stay in place
+  // as an empty string. Throwing (the old behaviour) killed the prompts of the
+  // whole range because of one unusable line, which is why some timestamps
+  // ended up with no prompt of their own at all.
   const built: string[] = [];
   for (const n of wanted) {
     const seg = all[n - 1] as Segment;
@@ -478,11 +483,15 @@ export async function writePrompts(
       built.push(sanitizePrompt(fallbackPrompt(seg)));
       continue;
     }
-    throw new Error(`No usable prompt could be written for line ${n} — retry this panel.`);
+    // Unusable for now (a non-English line the model would not translate).
+    // Empty keeps the alignment; the caller asks for this one line again.
+    console.error(`writePrompts: no prompt for line ${n} — left empty for repair`);
+    built.push("");
   }
 
   return chainContinuity(built);
 }
+
 
 /**
  * Panel-to-panel continuity.
