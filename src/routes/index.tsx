@@ -454,11 +454,14 @@ function Index() {
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             group.forEach((g) => requeue(g, msg));
+          } finally {
+            inFlight--;
           }
           // Count finished panels only — re-queued jobs must not inflate it.
           drawn = list.filter((s) => s.status === "done").length;
           tick();
           persist();
+
         }
       };
 
