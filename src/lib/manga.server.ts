@@ -1000,6 +1000,15 @@ function byteEntropy(buf: Uint8Array): number {
   return h;
 }
 
+/**
+ * True when the file at `url` is a COMPLETE, non-empty image.
+ *
+ * Half-drawn / cut-off panels were reaching the grid because only the first
+ * bytes were checked: a truncated download still starts with a valid PNG or
+ * JPEG header. The end-of-file marker is now checked too (PNG must end with
+ * IEND, JPEG with FFD9, WebP's RIFF length must match the bytes received), so
+ * an unfinished file is rejected and the panel is drawn again.
+ */
 async function isRealImage(url: string): Promise<boolean> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(45_000) });
@@ -1010,6 +1019,7 @@ async function isRealImage(url: string): Promise<boolean> {
     const isJpg = buf[0] === 0xff && buf[1] === 0xd8;
     const isWebp = buf[8] === 0x57 && buf[9] === 0x45;
     if (!isPng && !isJpg && !isWebp) return false;
+    if (!isComplete(buf, isPng, isJpg, isWebp)) return false;
     // skip the header before measuring entropy of the compressed payload
     return byteEntropy(buf.subarray(Math.min(2048, buf.byteLength >> 2))) >= MIN_ENTROPY;
   } catch {
@@ -1017,6 +1027,30 @@ async function isRealImage(url: string): Promise<boolean> {
     return true;
   }
 }
+
+/** Checks the image file actually reaches its end-of-file marker. */
+function isComplete(buf: Uint8Array, isPng: boolean, isJpg: boolean, isWebp: boolean): boolean {
+  const n = buf.byteLength;
+  if (isPng) {
+    // ...IEND®B`\x82
+    return (
+      buf[n - 8] === 0x49 && buf[n - 7] === 0x45 && buf[n - 6] === 0x4e && buf[n - 5] === 0x44
+    );
+  }
+  if (isJpg) {
+    // Trailing padding bytes are tolerated; look for FFD9 in the last few bytes.
+    for (let i = n - 2; i >= Math.max(0, n - 16); i--) {
+      if (buf[i] === 0xff && buf[i + 1] === 0xd9) return true;
+    }
+    return false;
+  }
+  if (isWebp) {
+    const size = buf[4]! | (buf[5]! << 8) | (buf[6]! << 16) | buf[7]! * 0x1000000;
+    return n >= size + 8;
+  }
+  return true;
+}
+
 
 /** Calls Flux.1 Schnell (free tier) at max quality with automatic retries. Always 16:9. */
 export async function generateImage(
