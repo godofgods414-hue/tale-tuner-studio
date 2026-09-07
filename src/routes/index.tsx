@@ -56,13 +56,11 @@ const SAMPLE = `(0:00)Henan की कहानी असुरा का उद
  * engine, so each pass covers 5x as many lines — far fewer requests per script,
  * which is what protects the daily free-model allowance.
  */
-// The model reads the story (whole script when it fits, a wide window around
-// the batch when the script is very long) and writes this many prompts per
-// request. Asking for the ENTIRE script in one answer is what made long
-// scripts come back with no prompts at all: one answer cannot hold thousands
-// of prompts, so it ran for many minutes and was cut off. Batches finish,
-// stream in, and start rendering panels straight away.
-const PROMPT_RANGE = 40;
+// The model reads the WHOLE script (1M+ input) on every pass and writes this
+// many prompts per request. MiniMax M3 answers up to ~264k tokens, so a large
+// batch still lands in one streamed answer — bigger batches mean far fewer
+// seams, so prompts stay faithful to the script's own lines and timestamps.
+const PROMPT_RANGE = 120;
 
 /**
  * Parallel image request lanes. Each lane sends IMAGE_BATCH prompts in one
