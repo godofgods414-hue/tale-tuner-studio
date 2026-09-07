@@ -356,20 +356,27 @@ function Index() {
 
       // Adaptive throttle: back off globally when the provider rate-limits.
       let cooldownUntil = 0;
+      // Jobs currently in flight. A worker must NOT exit while another worker
+      // is still rendering, because that worker can push a failed panel back
+      // onto the queue — with everyone already gone, the automatic retry
+      // silently never happened. This is what made retries look broken.
+      let inFlight = 0;
 
       const worker = async () => {
         for (;;) {
           if (cancelRef.current) return;
           const group = queue.splice(0, IMAGE_BATCH);
           if (group.length === 0) {
-            if (promptingDone) return;
-            await new Promise((r) => setTimeout(r, 100));
+            if (promptingDone && inFlight === 0) return;
+            await new Promise((r) => setTimeout(r, 150));
             continue;
           }
           const wait = cooldownUntil - Date.now();
           if (wait > 0) await new Promise((r) => setTimeout(r, wait));
 
+          inFlight++;
           group.forEach((g) => record(g.seg.index, { status: "drawing" }));
+
           /**
            * A failure is never final: the job goes back on the queue with a
            * fresh seed/key so every timestamp eventually gets its image. Only
