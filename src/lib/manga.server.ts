@@ -938,7 +938,9 @@ function clip(s: string, max: number): string {
 
 /** Compact renderer-side art direction (the full STYLE block does not fit). */
 const STYLE_SHORT =
-  "polished 2D Japanese anime frame, crisp ink linework, clean cel shading, painted anime background, vivid colours";
+  "polished 2D Japanese anime frame, crisp ink linework, clean cel shading, painted anime background, vivid colours, " +
+  "fully finished production artwork, every part of the frame completely drawn and coloured edge to edge, no unfinished sketch areas, no blank or empty patches";
+
 
 export function composeImagePrompt(prompt: string, bible?: string): string {
   const fixed = enforceGender(sanitizePrompt(prompt), bible);
