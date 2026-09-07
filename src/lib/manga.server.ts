@@ -270,7 +270,7 @@ const PROMPT_SYSTEM =
   "No JSON, no quotes, no brackets, no bullets, no headings, no blank lines, and never break one prompt across lines.";
 
 /** Hard ceiling on how much script text is pasted into one request. */
-const MAX_SCRIPT_CHARS = 600_000;
+const MAX_SCRIPT_CHARS = 2_000_000;
 
 /**
  * How much of the script is pasted in for continuity on one prompt-writing
@@ -280,10 +280,10 @@ const MAX_SCRIPT_CHARS = 600_000;
  * script still goes in; above it, the request carries the story opening plus a
  * generous window around the lines being drawn.
  */
-const CONTEXT_CHARS = 60_000;
+const CONTEXT_CHARS = 2_000_000;
 /** Lines of story kept before/after the batch when the script is long. */
-const CONTEXT_BEFORE = 120;
-const CONTEXT_AFTER = 40;
+const CONTEXT_BEFORE = 400;
+const CONTEXT_AFTER = 200;
 
 /** Numbers the WHOLE script, 1-based, exactly as the model must answer it. */
 function numberScript(all: Segment[]): string {
@@ -354,7 +354,7 @@ export async function writePrompts(
         `then the prompt on that same single line. Nothing else.`,
       {
         temperature: temp,
-        maxOutputTokens: Math.min(32_000, 2_000 + want.length * 190),
+        maxOutputTokens: Math.min(240_000, 4_000 + want.length * 220),
       },
     );
   };

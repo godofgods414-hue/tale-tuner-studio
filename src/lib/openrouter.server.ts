@@ -116,10 +116,9 @@ async function callOpenRouter(user: string, opts: ChatOptions): Promise<string> 
             { role: "user", content: user },
           ],
           temperature: opts.temperature ?? 0.7,
-          // Free MiniMax M3 rejects/ignores absurd ceilings and a huge single
-          // answer is what broke long scripts. 32k tokens is well inside the
-          // model's output limit and covers a full batch of prompts.
-          max_tokens: Math.min(32_000, opts.maxOutputTokens ?? 16_000),
+          // MiniMax M3 answers up to ~264k tokens, so big batches fit in one
+          // answer. Streaming keeps even the longest answer alive.
+          max_tokens: Math.min(240_000, opts.maxOutputTokens ?? 32_000),
           // STREAMING IS REQUIRED for long answers: a buffered request that
           // sends no bytes for ~2 minutes is severed by the hosting platform,
           // which is exactly why long scripts produced no prompts at all.
