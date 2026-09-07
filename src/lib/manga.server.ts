@@ -677,6 +677,31 @@ const DARK_TRIGGERS: [RegExp, string][] = [
   [/\b(dark|dim)\s+(and|,)\s+(mysterious|moody|gloomy|eerie)\b/gi, "clearly lit"],
 ];
 
+/**
+ * Art-style scrubber.
+ *
+ * The written prompt must describe CONTENT ONLY. Any medium/style/genre word
+ * the writing model slips in (realistic, photo, 3D render, oil painting, and
+ * even "anime"/"manga" themselves) is deleted here, so the ONLY style
+ * statement that ever reaches the renderer is the fixed anime block added in
+ * composeImagePrompt.
+ */
+const STYLE_TRIGGERS: [RegExp, string][] = [
+  // "in the style of X", "X style", "rendered in X", "X art"
+  [/\b(?:drawn|rendered|painted|illustrated|shot|captured)\s+(?:in|as|with)\s+[^,.]{0,60}/gi, ""],
+  [/\bin\s+(?:the\s+)?style\s+of\s+[^,.]{0,60}/gi, ""],
+  [/\b[\w-]+\s+(?:art\s+)?style\b/gi, ""],
+  [
+    /\b(photo[- ]?realistic|photorealism|photorealistic|hyper[- ]?realistic|realistic|realism|lifelike|true[- ]to[- ]life|photograph(y|ic)?|photo|dslr|bokeh|35mm|50mm|film grain|cinematic still|movie still|render(ed|ing)?|3d|cgi|unreal engine|octane|blender|pixar|disney|claymation|stop[- ]motion|low[- ]poly|voxel|pixel art|vector art|flat design|isometric)\b/gi,
+    "",
+  ],
+  [
+    /\b(anime|manga|manhwa|manhua|webtoon|comic book|cartoon|chibi|ghibli|shonen|shoujo|seinen|cel[- ]shaded|cel shading|line ?art|ink(ed)? drawing|pencil sketch|sketch(y)?|charcoal|watercolou?r|oil painting|acrylic|gouache|pastel drawing|digital painting|matte painting|concept art|illustration style|storybook illustration|woodcut|engraving|impressionist|surrealist|abstract|noir film|graphic novel)\b/gi,
+    "",
+  ],
+  [/\b(4k|8k|hdr|ultra[- ]detailed|highly detailed render|trending on artstation|artstation)\b/gi, ""],
+];
+
 /** Removes phrasing that makes the model draw a sheet/portrait, text, or a dark mood grade. */
 export function sanitizePrompt(p: string): string {
   let out = p
@@ -691,6 +716,8 @@ export function sanitizePrompt(p: string): string {
   for (const [re, to] of TEXT_TRIGGERS) out = out.replace(re, to);
   for (const [re, to] of METAPHOR_TRIGGERS) out = out.replace(re, to);
   for (const [re, to] of DARK_TRIGGERS) out = out.replace(re, to);
+  for (const [re, to] of STYLE_TRIGGERS) out = out.replace(re, to);
+
 
   return out
     .replace(/\s{2,}/g, " ")
