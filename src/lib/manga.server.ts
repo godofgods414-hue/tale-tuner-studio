@@ -272,23 +272,52 @@ const PROMPT_SYSTEM =
 /** Hard ceiling on how much script text is pasted into one request. */
 const MAX_SCRIPT_CHARS = 600_000;
 
+/**
+ * How much of the script is pasted in for continuity on one prompt-writing
+ * request. A full two-hour script is hundreds of thousands of characters; on a
+ * long story that made every single request enormous and slow, which is why
+ * long scripts finished with no prompts at all. Below this size the whole
+ * script still goes in; above it, the request carries the story opening plus a
+ * generous window around the lines being drawn.
+ */
+const CONTEXT_CHARS = 60_000;
+/** Lines of story kept before/after the batch when the script is long. */
+const CONTEXT_BEFORE = 120;
+const CONTEXT_AFTER = 40;
+
 /** Numbers the WHOLE script, 1-based, exactly as the model must answer it. */
 function numberScript(all: Segment[]): string {
   const text = all.map((s, i) => `${i + 1}. [${s.start}s-${s.end}s] ${s.text}`).join("\n");
   return text.length <= MAX_SCRIPT_CHARS ? text : text.slice(0, MAX_SCRIPT_CHARS);
 }
 
+function numberRange(all: Segment[], from: number, to: number): string {
+  return all
+    .slice(from - 1, to)
+    .map((s, i) => `${from + i}. [${s.start}s-${s.end}s] ${s.text}`)
+    .join("\n");
+}
+
+/** Story context for one batch: the whole script when short, a window when long. */
+function contextFor(all: Segment[], full: string, want: number[]): string {
+  if (full.length <= CONTEXT_CHARS) return full;
+  const first = Math.max(1, (want[0] as number) - CONTEXT_BEFORE);
+  const last = Math.min(all.length, (want[want.length - 1] as number) + CONTEXT_AFTER);
+  const opening = numberRange(all, 1, Math.min(30, all.length));
+  const windowed = numberRange(all, first, last);
+  return first > 31
+    ? `STORY OPENING:\n${opening}\n\n...\n\nSTORY AROUND THESE LINES:\n${windowed}`
+    : windowed;
+}
+
 /**
- * Writes image prompts for lines `from`..`to` (1-based, inclusive) while the
- * model reads the ENTIRE script.
+ * Writes image prompts for lines `from`..`to` (1-based, inclusive).
  *
- * NO CHUNKING. MiniMax M3 reads over a million tokens of input, so the whole
- * numbered script goes in on every call and the requested range comes back in
- * one answer. Splitting the request into small sub-batches burned the daily
- * free quota many times faster and, worse, each sub-batch only saw a keyhole of
- * the story — which is what let panels drift away from the script. One request
- * per range, the model sees everything, and only genuinely missing lines are
- * asked for again.
+ * Prompts are written in batches (the caller decides the batch size) because a
+ * single answer covering an entire long script never completes: the answer, not
+ * the input, is what has a ceiling. Each request carries the character bible
+ * plus as much surrounding story as fits, so continuity is kept, and only
+ * genuinely missing lines are asked for again.
  */
 export async function writePrompts(
   bible: string,
@@ -299,12 +328,13 @@ export async function writePrompts(
   const count = to - from + 1;
   if (count <= 0) return [];
 
-  const script = numberScript(all);
+  const full = numberScript(all);
 
   const ask = async (want: number[], temp: number) => {
     const first = want[0] as number;
     const last = want[want.length - 1] as number;
     const contiguous = want.length === last - first + 1;
+    const script = contextFor(all, full, want);
     const listing = want
       .map((n) => {
         const s = all[n - 1] as Segment;
@@ -315,7 +345,7 @@ export async function writePrompts(
     return textChat(
       PROMPT_SYSTEM,
       `CHARACTER BIBLE:\n${bible || "(none)"}\n\n` +
-        `FULL NUMBERED SCRIPT (read all of it for continuity):\n${script}\n\n` +
+        `NUMBERED SCRIPT (read it for continuity):\n${script}\n\n` +
         `LINES TO DRAW — write ONE prompt for EACH of these ${want.length} lines and nothing else. ` +
         `Each prompt draws ONLY its own numbered line's moment, place and action, and must be ` +
         `recognisable as that line:\n${listing}\n\n` +
@@ -324,10 +354,11 @@ export async function writePrompts(
         `then the prompt on that same single line. Nothing else.`,
       {
         temperature: temp,
-        maxOutputTokens: Math.min(200_000, 4_000 + want.length * 190),
+        maxOutputTokens: Math.min(32_000, 2_000 + want.length * 190),
       },
     );
   };
+
 
   const wanted = Array.from({ length: count }, (_, i) => from + i);
   const byNumber = new Map<number, string>();
