@@ -261,3 +261,52 @@ export function engineStatus(): { model: string; keyIndex: number; keys: number 
   const keys = openrouterKeys();
   return { model: MODEL, keyIndex: keyIdx + 1, keys: keys.length };
 }
+
+/**
+ * Reads a streamed completion.
+ *
+ * Long answers (a whole batch of storyboard prompts) can take many minutes to
+ * finish. A plain buffered request stays silent for that whole time and gets
+ * cut off by the hosting platform, so the app saw "no prompts" on long scripts.
+ * Streaming keeps bytes flowing and lets a partially finished answer still be
+ * used — the caller repairs whatever is missing.
+ */
+async function readStream(
+  res: Response,
+): Promise<{ text: string; err?: { message?: string; code?: number } }> {
+  const body = res.body;
+  if (!body) return { text: "" };
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let out = "";
+  let err: { message?: string; code?: number } | undefined;
+
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line || line.startsWith(":")) continue;
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (data === "[DONE]") continue;
+      try {
+        const json = JSON.parse(data) as {
+          choices?: { delta?: { content?: string }; message?: { content?: string } }[];
+          error?: { message?: string; code?: number };
+        };
+        if (json.error) err = json.error;
+        const piece = json.choices?.[0]?.delta?.content ?? json.choices?.[0]?.message?.content;
+        if (piece) out += piece;
+      } catch {
+        /* keep reading: a partial frame arrives complete on the next chunk */
+      }
+    }
+  }
+
+  return { text: out.trim(), err };
+}
