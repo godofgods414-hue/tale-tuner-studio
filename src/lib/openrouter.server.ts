@@ -273,7 +273,7 @@ export function engineStatus(): { model: string; keyIndex: number; keys: number 
  */
 async function readStream(
   res: Response,
-): Promise<{ text: string; err?: { message?: string; code?: number } }> {
+): Promise<{ text: string; err?: { message?: string; code?: number } | undefined }> {
   const body = res.body;
   if (!body) return { text: "" };
   const reader = body.getReader();
