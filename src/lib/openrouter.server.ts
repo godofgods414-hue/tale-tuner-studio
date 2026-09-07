@@ -116,16 +116,19 @@ async function callOpenRouter(user: string, opts: ChatOptions): Promise<string> 
             { role: "user", content: user },
           ],
           temperature: opts.temperature ?? 0.7,
-          max_tokens: opts.maxOutputTokens ?? 120_000,
+          // Free MiniMax M3 rejects/ignores absurd ceilings and a huge single
+          // answer is what broke long scripts. 32k tokens is well inside the
+          // model's output limit and covers a full batch of prompts.
+          max_tokens: Math.min(32_000, opts.maxOutputTokens ?? 16_000),
+          // STREAMING IS REQUIRED for long answers: a buffered request that
+          // sends no bytes for ~2 minutes is severed by the hosting platform,
+          // which is exactly why long scripts produced no prompts at all.
+          stream: true,
         }),
       });
 
       if (res.ok) {
-        const json = (await res.json()) as {
-          choices?: { message?: { content?: string } }[];
-          error?: { message?: string; code?: number };
-        };
-        const text = (json.choices?.[0]?.message?.content ?? "").trim();
+        const { text, err } = await readStream(res);
         if (text) {
           // A good call resets this key's short-limit streak.
           slot.shortHits = 0;
@@ -137,10 +140,9 @@ async function callOpenRouter(user: string, opts: ChatOptions): Promise<string> 
         // ({"error":{"code":429,...}}). Treating that as "empty completion"
         // kept hammering the same exhausted key instead of switching — that is
         // the auto-switch failure. Classify it exactly like an HTTP error.
-        const inBody = json.error;
-        if (inBody) {
-          lastErr = `${inBody.code ?? "error"} ${inBody.message ?? ""}`.trim();
-          const handled = park(slot, keys.length, inBody.code ?? 0, inBody.message ?? "", 0);
+        if (err) {
+          lastErr = `${err.code ?? "error"} ${err.message ?? ""}`.trim();
+          const handled = park(slot, keys.length, err.code ?? 0, err.message ?? "", 0);
           if (handled === "stop") break;
           continue;
         }
@@ -148,6 +150,7 @@ async function callOpenRouter(user: string, opts: ChatOptions): Promise<string> 
         // Empty answers repeat on the same key — move on rather than loop.
         advanceKey(keys.length);
         continue;
+
       }
 
       const body = (await res.text().catch(() => "")).slice(0, 600);
