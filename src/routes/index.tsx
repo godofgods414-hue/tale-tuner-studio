@@ -484,22 +484,27 @@ function Index() {
     }
   }
 
-  async function retryFailed() {
-    setPhase("running");
-    const key = scriptKey(script);
-    let keyTick = 0;
-    let list = shotsRef.current;
-    const record = (index: number, next: Partial<Shot>) => {
-      list = list.map((x) => (x.index === index ? { ...x, ...next } : x));
-      patch(index, next);
-    };
-    const targets = shotsRef.current.filter((s) => !s.url);
-    let n = 0;
-    await pool(targets, IMAGE_CONCURRENCY, async (shot) => {
-      record(shot.index, { status: "drawing" });
-      try {
-        let prompt = shot.prompt;
-        if (!prompt) {
+  /**
+   * Draws one panel again.
+   *
+   * The prompt this panel already has is REUSED — a retry used to ask the text
+   * model for a brand new prompt first, and on a long script that request is
+   * slow and often blocked by the daily free-model quota, so the retry died
+   * before it ever reached the image renderer. Only a panel with no prompt at
+   * all asks for one, and even then a failure there is reported instead of
+   * killing the retry. Each attempt uses a fresh random seed and key slot, and
+   * a blank frame counts as a failure.
+   */
+  const redrawShot = useCallback(
+    async (
+      shot: Shot,
+      record: (i: number, next: Partial<Shot>) => void,
+      slotBase: number,
+    ): Promise<boolean> => {
+      let prompt = shot.prompt;
+      if (!prompt) {
+        record(shot.index, { status: "prompting", error: undefined });
+        try {
           const { prompts } = await getPrompts({
             data: {
               bible,
@@ -513,36 +518,81 @@ function Index() {
               })),
             },
           });
-          prompt = prompts[0] as string;
+          prompt = prompts[0] as string | undefined;
+        } catch {
+          prompt = undefined;
         }
-
-        const { url } = await draw({
-          data: {
-            prompt,
-            seed: 7000 + shot.index,
-            slot: keyTick++,
-            bible,
-            line: shot.text,
-            timestamp: `${shot.start}s-${shot.end}s`,
-          },
-        });
-        record(shot.index, { url, prompt, status: "done", error: undefined });
-      } catch (e) {
-        record(shot.index, { status: "error", error: e instanceof Error ? e.message : String(e) });
+        if (!prompt) {
+          record(shot.index, { status: "error", error: "no prompt could be written" });
+          return false;
+        }
       }
-      n++;
-      setNote(`Retrying failed panels ${n}/${targets.length}`);
-    });
-    await saveProgress(key, { bible, shots: list });
-    setPhase("done");
-    setNote("Retry finished.");
+
+      record(shot.index, { prompt, status: "drawing", error: undefined });
+      let last = "render failed";
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const res = await draw({
+            data: {
+              prompt,
+              seed: 10_000 + shot.index * 31 + Math.floor(Math.random() * 900_000),
+              slot: slotBase + attempt,
+              bible,
+              line: shot.text,
+              timestamp: `${shot.start}s-${shot.end}s`,
+            },
+          });
+          const url = res.url;
+          if (url && !(await isBlankImageUrl(url))) {
+            record(shot.index, {
+              url,
+              prompt: res.prompt ?? prompt,
+              status: "done",
+              error: undefined,
+            });
+            return true;
+          }
+          last = "blank image";
+        } catch (e) {
+          last = e instanceof Error ? e.message : String(e);
+        }
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      }
+      record(shot.index, { status: "error", prompt, error: last });
+      return false;
+    },
+    [bible, draw, getPrompts],
+  );
+
+  async function retryFailed() {
+    const key = scriptKey(script);
+    setPhase("running");
+    let keyTick = 0;
+    let list = shotsRef.current;
+    const record = (index: number, next: Partial<Shot>) => {
+      list = list.map((x) => (x.index === index ? { ...x, ...next } : x));
+      patch(index, next);
+    };
+    const targets = shotsRef.current.filter((s) => !s.url);
+    let n = 0;
+    let ok = 0;
+    try {
+      await pool(targets, IMAGE_CONCURRENCY, async (shot) => {
+        const fresh = list.find((s) => s.index === shot.index) ?? shot;
+        if (await redrawShot(fresh, record, (keyTick += 3))) ok++;
+        n++;
+        setNote(`Retrying failed panels ${n}/${targets.length} · ${ok} fixed`);
+      });
+      await saveProgress(key, { bible, shots: list });
+      setNote(`Retry finished · ${ok}/${targets.length} panels fixed.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPhase("done");
+    }
   }
 
-  /**
-   * Re-rolls a single panel. The prompt is rewritten with the WHOLE script in
-   * context, so the new panel still fits the story, then only this panel is
-   * re-rendered on a fresh seed. Timestamps stay untouched.
-   */
+  /** Re-rolls a single panel on a fresh seed, keeping its timestamp and prompt. */
   async function retryOne(index: number) {
     if (retrying.includes(index)) return;
     setRetrying((prev) => [...prev, index]);
@@ -556,40 +606,7 @@ function Index() {
     try {
       const target = list.find((s) => s.index === index);
       if (!target) return;
-
-      record(index, { status: "prompting", error: undefined });
-
-      const { prompts } = await getPrompts({
-        data: {
-          bible,
-          from: index + 1,
-          to: index + 1,
-          segments: list.map((s) => ({
-            index: s.index,
-            start: s.start,
-            end: s.end,
-            text: s.text,
-          })),
-        },
-      });
-      const prompt = prompts[0] as string | undefined;
-      if (!prompt) throw new Error("no prompt");
-
-      record(index, { prompt, status: "drawing" });
-      const { url } = await draw({
-        data: {
-          prompt,
-          seed: 20000 + index * 31 + Math.floor(Math.random() * 9000),
-          slot: index + 1,
-          bible,
-          line: shotsRef.current.find((s) => s.index === index)?.text,
-          timestamp: (() => {
-            const s0 = shotsRef.current.find((s) => s.index === index);
-            return s0 ? `${s0.start}s-${s0.end}s` : undefined;
-          })(),
-        },
-      });
-      record(index, { url, prompt, status: "done", error: undefined });
+      await redrawShot(target, record, index + 1);
       await saveProgress(key, { bible, shots: list });
     } catch (e) {
       record(index, { status: "error", error: e instanceof Error ? e.message : String(e) });
@@ -598,6 +615,7 @@ function Index() {
       setRetrying((prev) => prev.filter((i) => i !== index));
     }
   }
+
 
   /* ---------------------------------------------------------------- */
   /* Video                                                             */
