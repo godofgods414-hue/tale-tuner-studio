@@ -60,7 +60,7 @@ const SAMPLE = `(0:00)Henan की कहानी असुरा का उद
 // many prompts per request. MiniMax M3 answers up to ~264k tokens, so a large
 // batch still lands in one streamed answer — bigger batches mean far fewer
 // seams, so prompts stay faithful to the script's own lines and timestamps.
-const PROMPT_RANGE = 250;
+const PROMPT_RANGE = 120;
 
 /**
  * Parallel image request lanes. Each lane sends IMAGE_BATCH prompts in one
